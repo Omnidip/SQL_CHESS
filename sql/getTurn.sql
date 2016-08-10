@@ -1,0 +1,3 @@
+SELECT G.turn
+FROM Game G
+WHERE G.gameID LIKE "GAME";
