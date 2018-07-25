@@ -1,11 +1,13 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <sqlite3.h>
+#include <string.h>
 
 #define CHAR_TO_INT 48
 #define UPPER_TO_LOWER 32
 #define LETTER_COORD_INT 96
 
+//read a file into a char array, took from the internet somewhere
 char* filetobuf(char *file) {
   FILE *fptr;
   long length;
@@ -25,6 +27,7 @@ char* filetobuf(char *file) {
   return buf; /* Return the buffer */
 }
 
+//render buffer for the board
 char boardRender[9][9] = {
   ' ','8','7','6','5','4','3','2','1',
   'a','-','-','-','-','-','-','-','-',
@@ -37,6 +40,7 @@ char boardRender[9][9] = {
   'h','-','-','-','-','-','-','-','-'
 };
 
+//copies the board into the render buffer
 int printBoard(void *v, int n, char **data, char **colName){
   char *p = data[0];
   char *x = data[1];
@@ -46,17 +50,21 @@ int printBoard(void *v, int n, char **data, char **colName){
   return 0;
 }
 
+//prompt the player for the correct turn
 int promptTurn(void *v, int n, char **data, char **colName){
   char *c = data[0];
   printf("%s's turn: ",(c[0]-CHAR_TO_INT)?"Uppercase":"Lowercase");
 }
 
+//reset the board back to default
 int resetBoard(sqlite3 *db, int delete){
   char* SQL_init = filetobuf("sql/init.sql");
   char* SQL_newGame = filetobuf("sql/newGame.sql");
 
+  sqlite3_close(db);
+
+  //if we are deleting the board, then do it
   if(delete){
-    sqlite3_close(db);
     printf("\nDeleteing Board..\n");
     remove("game.db");
   }
@@ -64,6 +72,7 @@ int resetBoard(sqlite3 *db, int delete){
   int status = 0;
   char *err = 0;
 
+  //open the board database
   status = sqlite3_open("game.db",&db);
   if(status != SQLITE_OK){
     fprintf(stderr, "Failed to open database: %s\n", sqlite3_errmsg(db));
@@ -73,6 +82,7 @@ int resetBoard(sqlite3 *db, int delete){
     printf("Regenerating Board..\n");
   }
 
+  //run the initialization script to set up the tables and triggers
   status = sqlite3_exec(db,SQL_init,NULL,(void*)NULL,&err);
   if(status != SQLITE_OK){
     fprintf(stderr, "Error: %s\n", err);
@@ -82,6 +92,7 @@ int resetBoard(sqlite3 *db, int delete){
     printf("Placing Pieces..\n");
   }
 
+  //place all of the pieces
   status = sqlite3_exec(db,SQL_newGame,NULL,(void*)NULL,&err);
   if(status != SQLITE_OK){
     fprintf(stderr, "Error: %s\n", err);
@@ -90,6 +101,8 @@ int resetBoard(sqlite3 *db, int delete){
   }else{
     printf("Done!\n");
   }
+
+  sqlite3_close(db);
 
   printf("\n");
 
@@ -107,6 +120,8 @@ int main () {
   int status;
   char *err = 0;
 
+  //open the board database
+  //this continues the last game that was played
   status = sqlite3_open("game.db",&db);
   if(status != SQLITE_OK){
     fprintf(stderr, "Failed to open database: %s\n", sqlite3_errmsg(db));
@@ -122,9 +137,11 @@ int main () {
     printf("Game Start!\n\n");
   }
 
-  char lastInput[5];
+  //start the main loop
+  char lastInput[5];//user input buffer
   while(1) {
 
+    //print the board to the console
     status = sqlite3_exec(db,SQL_printBoard,printBoard,(void*)NULL,&err);
     if(status != SQLITE_OK){
       fprintf(stderr, "Error: %s\n", err);
@@ -142,8 +159,10 @@ int main () {
     }
     printf("\n");
 
+    //get whose turn it is
     status = sqlite3_exec(db,SQL_getTurn,promptTurn,(void*)NULL,&err);
 
+    //get the users input
     int i=0;
     lastInput[0] = 0;
     while(1){
@@ -156,28 +175,58 @@ int main () {
       i++;
     }
 
-    char in[] = "\
-    INSERT INTO Move (gameID, type, x, y, tox, toy)\
-    VALUES (\"GAME\", \"%c\", %d, %d, %d, %d);\
-    ";
-    sprintf(in,in,lastInput[0],
-      lastInput[1]-LETTER_COORD_INT,
-      9-(lastInput[2]-CHAR_TO_INT),
-      lastInput[3]-LETTER_COORD_INT,
-      9-(lastInput[4]-CHAR_TO_INT)
-    );
+    //if the user typed reset, then reset the database
+    if(!strcmp(lastInput,"reset")){
 
-    //printf(in);
+      printf("\nResetting the board...\n");
+      resetBoard(db,1);
 
-    status = sqlite3_exec(db,in,NULL,(void*)NULL,&err);
-    if(status != SQLITE_OK){
-      printf("\nInvalid Move! Please try again.\n");
-      //fprintf(stderr, "Error: %s\n", err);
-      sqlite3_free(err);
+      status = sqlite3_open("game.db",&db);
+      if(status != SQLITE_OK){
+        fprintf(stderr, "Failed to open database: %s\n", sqlite3_errmsg(db));
+        sqlite3_close(db);
+        return(1);
+      }else{
+        status = sqlite3_exec(db,"SELECT * FROM GAME;",NULL,(void*)NULL,&err);
+        if(status != SQLITE_OK){
+          if(resetBoard(db,0)){
+            return(1);
+          };
+        }
+        printf("Game Start!\n\n");
+      }
+
+    //otherwise, translate their input into a move
+    }else{
+      //initialize a user move sql query
+      char in[] = "\
+      INSERT INTO Move (gameID, type, x, y, tox, toy)\
+      VALUES (\"GAME\", \"%c\", %d, %d, %d, %d);\
+      ";
+
+      if( i == 5 && lastInput[1] > LETTER_COORD_INT && lastInput[3] > LETTER_COORD_INT){ //check for errors that would crash
+        //translate the user input into a sql query
+        sprintf(in,in,lastInput[0],
+          lastInput[1]-LETTER_COORD_INT,
+          9-(lastInput[2]-CHAR_TO_INT),
+          lastInput[3]-LETTER_COORD_INT,
+          9-(lastInput[4]-CHAR_TO_INT)
+        );
+
+        //attempt the move
+        status = sqlite3_exec(db,in,NULL,(void*)NULL,&err);
+        if(status != SQLITE_OK){
+          printf("\nInvalid Move! Please try again.\n");
+          //fprintf(stderr, "Error: %s\n", err);
+          sqlite3_free(err);
+        }
+
+      }else{
+        printf("\nInvalid Move! Please try again.\n");
+      }
+
     }
     printf("\n");
-
-
 
   }
 

@@ -1,16 +1,15 @@
 CC=gcc
-CFLAGS= -I. -L. -lsqlite3
+CFLAGS= -I. -L. -lsqlite3 -static-libgcc -static-libstdc++ -Wl,-Bstatic -lstdc++ -lpthread
 
 build/%.o: src/%.c
 	$(CC) -c -o $@ $< $(CFLAGS)
 
-rbuild/%.o: rsrc/%.c
-	$(CC) -c -o $@ $< $(CFLAGS)
+all: sqlchess 
 
-all: sqlchess reset
+clean:
+	rm -rf build
+	mkdir -p build
+	make all
 
 sqlchess: build/main.o
 	$(CC) -o sqlchess build/main.o $(CFLAGS)
-
-reset: rbuild/main.o
-	$(CC) -o reset rbuild/main.o $(CFLAGS)
